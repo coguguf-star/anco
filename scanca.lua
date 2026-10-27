@@ -1,15 +1,13 @@
 -- ============================================================
---  CAA Recon v7
---  - log MENTAH kronologis (nol yang hilang) + log POLA agregat
---  - nama file unik pakai timestamp, tidak menimpa file lama
---  - fire() aman untuk RemoteEvent maupun RemoteFunction
---  - tombol VIEW buat pindah POLA / RAW
+--  CAA Recon v8
+--  fix: '...' di dalam fungsi anonim (bug compile v6/v7)
+--  + penjaga re-parent kalau GUI kelepas saat teleport
 -- ============================================================
 local Players = game:GetService("Players")
 local RS      = game:GetService("ReplicatedStorage")
 local UIS     = game:GetService("UserInputService")
 
-local function log(...) print("[CAA7]", ...) end
+local function log(...) print("[CAA8]", ...) end
 log("start")
 
 local plr = Players.LocalPlayer
@@ -47,21 +45,26 @@ local function corner(o, r)
   c.Parent = o
 end
 
-local function step(n) if title then title.Text = "v7 step " .. n end end
+local function step(n) if title then title.Text = "v8 step " .. n end end
 
--- RemoteFunction vs RemoteEvent
+-- >>> INI YANG DIPERBAIKI <<<
 fire = function(remote, ...)
   if not remote then return false end
+  local args = table.pack(...)
   if remote:IsA("RemoteFunction") then
-    return (pcall(function() return remote:InvokeServer(...) end))
+    return (pcall(function()
+      return remote:InvokeServer(table.unpack(args, 1, args.n))
+    end))
   end
-  return (pcall(function() remote:FireServer(...) end))
+  return (pcall(function()
+    remote:FireServer(table.unpack(args, 1, args.n))
+  end))
 end
 
 local Remotes = RS:FindFirstChild("Shared")
 Remotes = Remotes and Remotes:FindFirstChild("Remotes")
 local CombatReq = Remotes and Remotes:FindFirstChild("PlayerCombatRequest")
-log("CombatReq:", CombatReq and (CombatReq.ClassName) or "TIDAK ADA")
+log("CombatReq:", CombatReq and CombatReq.ClassName or "TIDAK ADA")
 
 -- ================= BUILD =================
 local okBuild, errBuild = pcall(function()
@@ -96,7 +99,7 @@ local okBuild, errBuild = pcall(function()
   title.Position = UDim2.new(0, 10, 0, 0)
   title.BackgroundTransparency = 1
   title.TextXAlignment = Enum.TextXAlignment.Left
-  title.Text = "v7 start"
+  title.Text = "v8 start"
   title.TextSize = 13
   title.Font = Enum.Font.GothamMedium
   title.TextColor3 = Color3.fromRGB(232, 232, 240)
@@ -200,12 +203,9 @@ local okBuild, errBuild = pcall(function()
     end)
   end
 
-  -- ---------- data: dua lapis ----------
   record = function(dir, name, args)
     if paused then return end
     total += 1
-
-    -- lapis 1: mentah, urut, nol yang hilang
     rawTotal += 1
     rawLog[#rawLog + 1] = ("%8.2f %s %s(%s)"):format(os.clock() - T0, dir, name, args)
     if #rawLog > RAWCAP then
@@ -213,8 +213,6 @@ local okBuild, errBuild = pcall(function()
       for i = 10001, #rawLog do baru[#baru + 1] = rawLog[i] end
       rawLog = baru
     end
-
-    -- lapis 2: pola agregat
     local key = dir .. "|" .. name .. "|" .. args
     local e = index[key]
     if e then
@@ -248,7 +246,7 @@ local okBuild, errBuild = pcall(function()
     view.Text = table.concat(L, "\n")
     view.Size = UDim2.new(1, -6, 0, (#L * LINES_H) + 6)
     scroll.CanvasSize = UDim2.new(0, 0, 0, (#L * LINES_H) + 12)
-    title.Text = ("CAA v7  [%d]"):format(total)
+    title.Text = ("CAA v8  [%d]"):format(total)
   end
 
   stateDump = function()
@@ -295,7 +293,7 @@ local okBuild, errBuild = pcall(function()
   end
 
   dumpText = function(denganRaw)
-    local L = { "CAA Recon v7 dump", ("total %d event / %d pola"):format(total, #entries), "" }
+    local L = { "CAA Recon v8 dump", ("total %d event / %d pola"):format(total, #entries), "" }
     L[#L + 1] = "== CLIENT -> SERVER =="
     for _, e in ipairs(entries) do
       if e.dir == ">" then L[#L + 1] = ("%s(%s) x%d"):format(e.name, e.args, e.count) end
@@ -340,7 +338,7 @@ local okBuild, errBuild = pcall(function()
   end
 
   writeOut = function(full)
-    local path = uniquePath("CAA_v7_" .. stamp())
+    local path = uniquePath("CAA_v8_" .. stamp())
     local txt = dumpText(full)
     local ok
     if writefile then
@@ -351,7 +349,6 @@ local okBuild, errBuild = pcall(function()
     return ok, path
   end
 
-  -- ---------- tombol ----------
   step(9)
   btnPause.MouseButton1Click:Connect(function()
     paused = not paused
@@ -369,7 +366,7 @@ local okBuild, errBuild = pcall(function()
   btnView.MouseButton1Click:Connect(function()
     showRaw = not showRaw
     btnView.Text = showRaw and "RAW" or "POLA"
-    notify(showRaw and "tampilan RAW (kronologis)" or "tampilan POLA (agregat)")
+    notify(showRaw and "tampilan RAW" or "tampilan POLA")
     pcall(render)
   end)
 
@@ -464,7 +461,7 @@ if not okBuild then
   t.TextSize = 13
   t.Font = Enum.Font.Code
   t.TextColor3 = Color3.fromRGB(255, 190, 190)
-  t.Text = "CAA v7 GAGAL DI BUILD:\n\n" .. tostring(errBuild)
+  t.Text = "CAA v8 GAGAL DI BUILD:\n\n" .. tostring(errBuild)
   t.Parent = f
   return
 end
@@ -567,19 +564,30 @@ task.spawn(function()
   end
 end)
 
--- autosave pakai nama tetap, SAVE manual pakai nama unik
+-- penjaga: kalau GUI kelepas (teleport antar place), pasang ulang
+task.spawn(function()
+  while true do
+    task.wait(1)
+    if gui and gui.Parent == nil then
+      local p = Players.LocalPlayer
+      p = p and p:FindFirstChildOfClass("PlayerGui")
+      if p then gui.Parent = p end
+    end
+  end
+end)
+
 task.spawn(function()
   while gui.Parent do
     task.wait(25)
     if total > 0 then
       pcall(function()
         local txt = dumpText(true)
-        if writefile then writefile("CAA_v7_autosave.txt", txt)
-        elseif write_file then write_file("CAA_v7_autosave.txt", txt) end
+        if writefile then writefile("CAA_v8_autosave.txt", txt)
+        elseif write_file then write_file("CAA_v8_autosave.txt", txt) end
       end)
     end
   end
 end)
 
 pcall(render)
-log("v7 aktif")
+log("v8 aktif")
